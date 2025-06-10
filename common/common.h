@@ -488,6 +488,17 @@ struct x264_t
         int     mv_miny_fpel_row[3];
         int     mv_maxy_fpel_row[3];
 
+        /* Motion estimation statistics for adaptive thresholds */
+        struct
+        {
+            uint64_t total_me_time;        /* Accumulated ME time for performance monitoring */
+            uint64_t total_variance_calcs; /* Number of variance calculations performed */
+            float    avg_me_cost;          /* Recent average ME cost for adaptive thresholds */
+            int      complexity_level;     /* Current complexity level (0-3) */
+            int      stats_window_pos;     /* Current position in statistics window */
+            float    me_costs[32];         /* Circular buffer for ME costs (window size from param) */
+        } me_stats;
+
         /* neighboring MBs */
         unsigned int i_neighbour;
         unsigned int i_neighbour8[4];       /* neighbours of each 8x8 or 4x4 block that are available */

@@ -179,6 +179,193 @@ do\
 #define SPEL(mv) ((mv)*4)      /* ... and the reverse. */
 #define SPELx2(mv) (SPEL(mv)&0xFFFCFFFC) /* for two packed MVs */
 
+/* Calculate variance for adaptive search area scaling - scalar fallback */
+static uint32_t calculate_block_variance_scalar( pixel *p_fenc, int i_stride, int bw, int bh )
+{
+    uint32_t sum = 0, sum_sq = 0;
+    int total_pixels = bw * bh;
+    
+    for( int y = 0; y < bh; y++ )
+    {
+        for( int x = 0; x < bw; x++ )
+        {
+            int pixel_val = p_fenc[y * i_stride + x];
+            sum += pixel_val;
+            sum_sq += pixel_val * pixel_val;
+        }
+    }
+    
+    uint32_t mean = sum / total_pixels;
+    uint32_t variance = (sum_sq / total_pixels) - (mean * mean);
+    return variance;
+}
+
+/* Dual accumulator variance calculation for custom block sizes (SVT-AV1 inspired) */
+static uint32_t calculate_variance_dual_accumulator( pixel *p_fenc, int i_stride, int bw, int bh )
+{
+    /* Use dual accumulator pattern to prevent overflow with larger block sizes */
+    uint64_t sum = 0, sum_sq = 0;
+    int total_pixels = bw * bh;
+    
+    /* Process in chunks to prevent overflow (similar to SVT-AV1's approach) */
+    const int chunk_height = (bh > 32) ? 16 : bh; /* Limit chunk size for overflow protection */
+    
+    for( int chunk_y = 0; chunk_y < bh; chunk_y += chunk_height )
+    {
+        int actual_chunk_height = X264_MIN( chunk_height, bh - chunk_y );
+        uint32_t chunk_sum = 0, chunk_sum_sq = 0;
+        
+        /* Process chunk with efficient accumulation */
+        for( int y = chunk_y; y < chunk_y + actual_chunk_height; y++ )
+        {
+            for( int x = 0; x < bw; x++ )
+            {
+                int pixel_val = p_fenc[y * i_stride + x];
+                chunk_sum += pixel_val;
+                chunk_sum_sq += pixel_val * pixel_val;
+            }
+        }
+        
+        /* Add chunk results to main accumulators */
+        sum += chunk_sum;
+        sum_sq += chunk_sum_sq;
+    }
+    
+    /* Calculate variance using 64-bit arithmetic to prevent overflow */
+    uint64_t mean = sum / total_pixels;
+    uint64_t variance = (sum_sq / total_pixels) - (mean * mean);
+    
+    /* Clamp variance to 32-bit range */
+    return (uint32_t)X264_MIN( variance, UINT32_MAX );
+}
+
+/* SIMD-accelerated variance calculation using x264's optimized functions */
+static uint32_t calculate_block_variance_simd( pixel *p_fenc, int i_stride, int bw, int bh, x264_t *h )
+{
+    /* Map block dimensions to x264's pixel function indices */
+    int pixel_idx = -1;
+    
+    if( bw == 16 && bh == 16 )
+        pixel_idx = PIXEL_16x16;
+    else if( bw == 16 && bh == 8 )
+        pixel_idx = PIXEL_16x8;
+    else if( bw == 8 && bh == 16 )
+        pixel_idx = PIXEL_8x16;
+    else if( bw == 8 && bh == 8 )
+        pixel_idx = PIXEL_8x8;
+    else if( bw == 8 && bh == 4 )
+        pixel_idx = PIXEL_8x4;
+    else if( bw == 4 && bh == 8 )
+        pixel_idx = PIXEL_4x8;
+    else if( bw == 4 && bh == 4 )
+        pixel_idx = PIXEL_4x4;
+    
+    /* Use optimized SIMD variance calculation if available */
+    if( pixel_idx >= 0 && pixel_idx <= PIXEL_8x8 && h->pixf.var[pixel_idx] )
+    {
+        /* x264's var functions return packed variance in upper 32 bits */
+        uint64_t variance_result = h->pixf.var[pixel_idx]( p_fenc, i_stride );
+        return (uint32_t)(variance_result >> 32); /* Extract variance from upper bits */
+    }
+    
+    /* For larger or non-standard block sizes, use dual accumulator pattern */
+    if( bw * bh > 256 ) /* Use dual accumulator for blocks larger than 16x16 */
+        return calculate_variance_dual_accumulator( p_fenc, i_stride, bw, bh );
+    
+    /* Fallback to scalar implementation for small unsupported sizes */
+    return calculate_block_variance_scalar( p_fenc, i_stride, bw, bh );
+}
+
+/* Main variance calculation function - chooses best implementation */
+static uint32_t calculate_block_variance( pixel *p_fenc, int i_stride, int bw, int bh, x264_t *h )
+{
+    return calculate_block_variance_simd( p_fenc, i_stride, bw, bh, h );
+}
+
+/* Classify variance into context categories */
+static int classify_variance_context( uint32_t variance, const int thresholds[3] )
+{
+    if( variance < thresholds[0] )
+        return VARIANCE_LOW;
+    else if( variance < thresholds[1] )
+        return VARIANCE_MEDIUM;
+    else if( variance < thresholds[2] )
+        return VARIANCE_HIGH;
+    else
+        return VARIANCE_EXTREME;
+}
+
+/* Update motion estimation statistics for adaptive threshold adjustment */
+static void update_me_statistics( x264_t *h, float me_cost )
+{
+    /* Add cost to circular buffer */
+    int window_size = h->param.analyse.i_me_stats_window;
+    if( window_size <= 0 || window_size > 32 ) window_size = 32;
+    
+    h->mb.me_stats.me_costs[h->mb.me_stats.stats_window_pos] = me_cost;
+    h->mb.me_stats.stats_window_pos = (h->mb.me_stats.stats_window_pos + 1) % window_size;
+    
+    /* Calculate moving average */
+    float sum = 0.0f;
+    for( int i = 0; i < window_size; i++ )
+        sum += h->mb.me_stats.me_costs[i];
+    h->mb.me_stats.avg_me_cost = sum / window_size;
+    
+    /* Update motion activity factor based on recent costs (inspired by SVT-AV1) */
+    if( h->param.analyse.b_adaptive_thresholds )
+    {
+        /* Normalize ME cost to reasonable range for threshold scaling */
+        float normalized_cost = h->mb.me_stats.avg_me_cost / 1000.0f; /* Typical ME cost range */
+        h->param.analyse.f_motion_activity_factor = X264_MIN( X264_MAX( normalized_cost, 0.5f ), 2.0f );
+    }
+}
+
+/* Enhanced variance classification with adaptive thresholds (SVT-AV1 inspired) */
+static int classify_variance_context_adaptive( uint32_t variance, x264_t *h )
+{
+    if( !h->param.analyse.b_adaptive_thresholds )
+        return classify_variance_context( variance, h->param.analyse.i_variance_threshold );
+    
+    /* Adapt thresholds based on recent motion estimation activity */
+    float activity_scale = h->param.analyse.f_motion_activity_factor;
+    int adapted_thresholds[3];
+    
+    for( int i = 0; i < 3; i++ )
+    {
+        adapted_thresholds[i] = (int)(h->param.analyse.i_base_thresholds[i] * activity_scale);
+        /* Ensure thresholds remain within reasonable bounds */
+        adapted_thresholds[i] = X264_MIN( X264_MAX( adapted_thresholds[i], 50 ), 2000 );
+    }
+    
+    return classify_variance_context( variance, adapted_thresholds );
+}
+
+/* Apply variance-based adaptation to motion estimation range */
+static void apply_variance_adaptation( x264_t *h, x264_me_t *m, pixel *p_fenc, int *p_me_range )
+{
+    if( !h->param.analyse.b_adaptive_me_range )
+        return;
+        
+    const int bw = x264_pixel_size[m->i_pixel].w;
+    const int bh = x264_pixel_size[m->i_pixel].h;
+    
+    /* Calculate block variance using SIMD-accelerated functions */
+    m->i_block_var = calculate_block_variance( p_fenc, FENC_STRIDE, bw, bh, h );
+    
+    /* Update statistics for performance monitoring */
+    h->mb.me_stats.total_variance_calcs++;
+    
+    /* Classify variance context using adaptive thresholds */
+    m->i_variance_ctx = classify_variance_context_adaptive( m->i_block_var, h );
+    
+    /* Apply scale factor based on variance context */
+    float scale_factor = h->param.analyse.f_me_range_scale[m->i_variance_ctx];
+    *p_me_range = (int)(*p_me_range * scale_factor + 0.5f);
+    
+    /* Ensure minimum search range of 1 */
+    *p_me_range = X264_MAX( *p_me_range, 1 );
+}
+
 void x264_me_search_ref( x264_t *h, x264_me_t *m, int16_t (*mvc)[2], int i_mvc, int *p_halfpel_thresh )
 {
     const int bw = x264_pixel_size[m->i_pixel].w;
@@ -186,6 +373,9 @@ void x264_me_search_ref( x264_t *h, x264_me_t *m, int16_t (*mvc)[2], int i_mvc, 
     const int i_pixel = m->i_pixel;
     const int stride = m->i_stride[0];
     int i_me_range = h->param.analyse.i_me_range;
+    
+    /* Apply adaptive search area scaling based on block variance */
+    apply_variance_adaptation( h, m, m->p_fenc[0], &i_me_range );
     int bmx, bmy, bcost = COST_MAX;
     int bpred_cost = COST_MAX;
     int omx, omy, pmx, pmy;
@@ -795,6 +985,10 @@ void x264_me_search_ref( x264_t *h, x264_me_t *m, int16_t (*mvc)[2], int i_mvc, 
         int qpel = subpel_iterations[h->mb.i_subpel_refine][3];
         refine_subpel( h, m, hpel, qpel, p_halfpel_thresh, 0 );
     }
+    
+    /* Update ME statistics for adaptive threshold adjustment */
+    if( h->param.analyse.b_adaptive_thresholds )
+        update_me_statistics( h, (float)m->cost );
 }
 #undef COST_MV
 

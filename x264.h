@@ -416,6 +416,17 @@ typedef struct x264_param_t
         int          i_mv_range; /* maximum length of a mv (in pixels). -1 = auto, based on level */
         int          i_mv_range_thread; /* minimum space between threads. -1 = auto, based on number of threads. */
         int          i_subpel_refine; /* subpixel motion estimation quality */
+        
+        /* Adaptive search area scaling parameters */
+        int          b_adaptive_me_range; /* Enable adaptive motion estimation range scaling based on variance */
+        int          i_variance_threshold[3]; /* Thresholds for variance-based ME range scaling [low, medium, high] */
+        float        f_me_range_scale[4]; /* Scale factors for different variance levels [low, medium, high, extreme] */
+        
+        /* Advanced adaptive ME parameters (inspired by SVT-AV1) */
+        int          b_adaptive_thresholds; /* Enable content-adaptive threshold adjustment */
+        float        f_motion_activity_factor; /* Scale factor based on recent ME costs (0.5-2.0) */
+        int          i_base_thresholds[3]; /* Base thresholds for adaptation [100, 400, 1000] */
+        int          i_me_stats_window; /* Window size for motion estimation statistics (default: 32) */
         int          b_chroma_me; /* chroma ME for subpel and mode decision in P-frames */
         int          b_mixed_references; /* allow each mb partition to have its own reference number */
         int          i_trellis;  /* trellis RD quantization */

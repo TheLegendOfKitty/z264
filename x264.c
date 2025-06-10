@@ -799,6 +799,12 @@ static void help( x264_param_t *defaults, int longhelp )
         "                                  - tesa: hadamard exhaustive search (slow)\n" );
     else H1( "                                  - dia, hex, umh\n" );
     H2( "      --merange <integer>     Maximum motion vector search range [%d]\n", defaults->analyse.i_me_range );
+    H2( "      --adaptive-me-range     Enable adaptive motion estimation range scaling\n" );
+    H2( "      --adaptive-thresholds   Enable content-adaptive threshold adjustment\n" );
+    H2( "      --motion-activity-factor <float> Motion activity scale factor [%.1f]\n", defaults->analyse.f_motion_activity_factor );
+    H2( "      --base-thresholds <int,int,int> Base thresholds for adaptation [%d,%d,%d]\n", 
+        defaults->analyse.i_base_thresholds[0], defaults->analyse.i_base_thresholds[1], defaults->analyse.i_base_thresholds[2] );
+    H2( "      --me-stats-window <int> Motion estimation statistics window size [%d]\n", defaults->analyse.i_me_stats_window );
     H2( "      --mvrange <integer>     Maximum motion vector length [-1 (auto)]\n" );
     H2( "      --mvrange-thread <int>  Minimum buffer between threads [-1 (auto)]\n" );
     H1( "  -m, --subme <integer>       Subpixel motion estimation and mode decision [%d]\n", defaults->analyse.i_subpel_refine );
@@ -1079,6 +1085,11 @@ static struct option long_options[] =
     { "weightp",              required_argument, NULL, 0 },
     { "me",                   required_argument, NULL, 0 },
     { "merange",              required_argument, NULL, 0 },
+    { "adaptive-me-range",    no_argument,       NULL, 0 },
+    { "adaptive-thresholds",  no_argument,       NULL, 0 },
+    { "motion-activity-factor", required_argument, NULL, 0 },
+    { "base-thresholds",      required_argument, NULL, 0 },
+    { "me-stats-window",      required_argument, NULL, 0 },
     { "mvrange",              required_argument, NULL, 0 },
     { "mvrange-thread",       required_argument, NULL, 0 },
     { "subme",                required_argument, NULL, 'm' },

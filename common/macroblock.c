@@ -511,6 +511,16 @@ void x264_macroblock_thread_init( x264_t *h )
                           (h->param.analyse.b_dct_decimate && h->sh.i_type != SLICE_TYPE_I);
     h->mb.i_mb_prev_xy = -1;
 
+    /* Initialize motion estimation statistics for adaptive thresholds */
+    if( h->param.analyse.b_adaptive_thresholds )
+    {
+        memset( &h->mb.me_stats, 0, sizeof(h->mb.me_stats) );
+        h->mb.me_stats.avg_me_cost = 1000.0f; /* Initialize with typical ME cost */
+        /* Initialize ME costs circular buffer with neutral values */
+        for( int i = 0; i < 32; i++ )
+            h->mb.me_stats.me_costs[i] = 1000.0f;
+    }
+
     /*          4:2:0                      4:2:2                      4:4:4
      * fdec            fenc       fdec            fenc       fdec            fenc
      * y y y y y y y   Y Y Y Y    y y y y y y y   Y Y Y Y    y y y y y y y   Y Y Y Y

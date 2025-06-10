@@ -30,6 +30,14 @@
 #define COST_MAX (1<<28)
 #define COST_MAX64 (1ULL<<60)
 
+/* Variance context for adaptive search area scaling */
+enum variance_context_e {
+    VARIANCE_LOW = 0,     /* Static/low motion content */
+    VARIANCE_MEDIUM = 1,  /* Moderate motion content */
+    VARIANCE_HIGH = 2,    /* High motion content */
+    VARIANCE_EXTREME = 3  /* Very high motion content */
+};
+
 typedef struct
 {
     /* aligning the first member is a gcc hack to force the struct to be aligned,
@@ -48,6 +56,10 @@ typedef struct
     int      i_stride[3];
 
     ALIGNED_4( int16_t mvp[2] );
+
+    /* adaptive search area scaling */
+    int      i_variance_ctx;  /* variance context for current block */
+    uint32_t i_block_var;     /* calculated variance for current block */
 
     /* output */
     int cost_mv;        /* lambda * nbits for the chosen mv */

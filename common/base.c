@@ -441,6 +441,24 @@ REALIGN_STACK void x264_param_default( x264_param_t *param )
     param->analyse.b_psy = 1;
     param->analyse.f_psy_trellis = 0;
     param->analyse.i_me_range = 16;
+    
+    /* Initialize adaptive search area scaling parameters */
+    param->analyse.b_adaptive_me_range = 0;  /* Disabled by default */
+    param->analyse.i_variance_threshold[0] = 100;   /* Low variance threshold */
+    param->analyse.i_variance_threshold[1] = 400;   /* Medium variance threshold */
+    param->analyse.i_variance_threshold[2] = 1000;  /* High variance threshold */
+    param->analyse.f_me_range_scale[0] = 0.5f;      /* Low variance: reduce search */
+    param->analyse.f_me_range_scale[1] = 0.75f;     /* Medium variance: slight reduction */
+    param->analyse.f_me_range_scale[2] = 1.0f;      /* High variance: normal search */
+    param->analyse.f_me_range_scale[3] = 1.5f;      /* Extreme variance: expand search */
+    
+    /* Advanced adaptive ME parameters (SVT-AV1 inspired) */
+    param->analyse.b_adaptive_thresholds = 0;       /* Disabled by default */
+    param->analyse.f_motion_activity_factor = 1.0f; /* Initial neutral scale factor */
+    param->analyse.i_base_thresholds[0] = 100;      /* Base low variance threshold */
+    param->analyse.i_base_thresholds[1] = 400;      /* Base medium variance threshold */
+    param->analyse.i_base_thresholds[2] = 1000;     /* Base high variance threshold */
+    param->analyse.i_me_stats_window = 32;          /* Statistics window size */
     param->analyse.i_subpel_refine = 7;
     param->analyse.b_mixed_references = 1;
     param->analyse.b_chroma_me = 1;
@@ -1265,6 +1283,39 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         b_error |= parse_enum( value, x264_motion_est_names, &p->analyse.i_me_method );
     OPT2("merange", "me-range")
         p->analyse.i_me_range = atoi(value);
+    OPT("adaptive-me-range")
+        p->analyse.b_adaptive_me_range = atobool(value);
+    OPT("variance-threshold")
+    {
+        if( 3 == sscanf( value, "%d,%d,%d", &p->analyse.i_variance_threshold[0], 
+                         &p->analyse.i_variance_threshold[1], &p->analyse.i_variance_threshold[2] ) )
+        { /* all three values parsed successfully */ }
+        else
+            b_error = 1;
+    }
+    OPT("me-range-scale")
+    {
+        if( 4 == sscanf( value, "%f,%f,%f,%f", &p->analyse.f_me_range_scale[0],
+                         &p->analyse.f_me_range_scale[1], &p->analyse.f_me_range_scale[2], 
+                         &p->analyse.f_me_range_scale[3] ) )
+        { /* all four values parsed successfully */ }
+        else
+            b_error = 1;
+    }
+    OPT("adaptive-thresholds")
+        p->analyse.b_adaptive_thresholds = atobool(value);
+    OPT("motion-activity-factor")
+        p->analyse.f_motion_activity_factor = atof(value);
+    OPT("base-thresholds")
+    {
+        if( 3 == sscanf( value, "%d,%d,%d", &p->analyse.i_base_thresholds[0],
+                         &p->analyse.i_base_thresholds[1], &p->analyse.i_base_thresholds[2] ) )
+        { /* all three values parsed successfully */ }
+        else
+            b_error = 1;
+    }
+    OPT("me-stats-window")
+        p->analyse.i_me_stats_window = atoi(value);
     OPT2("mvrange", "mv-range")
         p->analyse.i_mv_range = atoi(value);
     OPT2("mvrange-thread", "mv-range-thread")
