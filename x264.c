@@ -805,6 +805,14 @@ static void help( x264_param_t *defaults, int longhelp )
     H2( "      --base-thresholds <int,int,int> Base thresholds for adaptation [%d,%d,%d]\n", 
         defaults->analyse.i_base_thresholds[0], defaults->analyse.i_base_thresholds[1], defaults->analyse.i_base_thresholds[2] );
     H2( "      --me-stats-window <int> Motion estimation statistics window size [%d]\n", defaults->analyse.i_me_stats_window );
+    H2( "      --parallel-lookahead    Enable parallel lookahead processing\n" );
+    H2( "      --lookahead-workers <int> Number of lookahead worker threads [0=auto]\n" );
+    H2( "      --fast-intra            Enable fast intra prediction with early termination\n" );
+    H2( "      --intra-complexity <int> Intra complexity level: 0=fastest, 3=slowest [%d]\n", defaults->analyse.i_intra_complexity );
+    H2( "      --intra-variance-bias <float> Variance-based mode filtering bias [%.1f]\n", defaults->analyse.f_intra_variance_bias );
+    H2( "      --adaptive-ref          Enable adaptive reference frame selection\n" );
+    H2( "      --adaptive-ref-temporal <int> Maximum temporal distance for reference scoring [%d]\n", defaults->analyse.i_adaptive_ref_temporal_distance );
+    H2( "      --adaptive-ref-threshold <float> Score threshold for reference inclusion [%.2f]\n", defaults->analyse.f_adaptive_ref_threshold );
     H2( "      --mvrange <integer>     Maximum motion vector length [-1 (auto)]\n" );
     H2( "      --mvrange-thread <int>  Minimum buffer between threads [-1 (auto)]\n" );
     H1( "  -m, --subme <integer>       Subpixel motion estimation and mode decision [%d]\n", defaults->analyse.i_subpel_refine );
@@ -1086,6 +1094,14 @@ static struct option long_options[] =
     { "me",                   required_argument, NULL, 0 },
     { "merange",              required_argument, NULL, 0 },
     { "adaptive-me-range",    no_argument,       NULL, 0 },
+    { "parallel-lookahead",   no_argument,       NULL, 0 },
+    { "lookahead-workers", required_argument,    NULL, 0 },
+    { "fast-intra",           no_argument,       NULL, 0 },
+    { "intra-complexity",     required_argument, NULL, 0 },
+    { "intra-variance-bias",  required_argument, NULL, 0 },
+    { "adaptive-ref",         no_argument,       NULL, 0 },
+    { "adaptive-ref-temporal", required_argument, NULL, 0 },
+    { "adaptive-ref-threshold", required_argument, NULL, 0 },
     { "adaptive-thresholds",  no_argument,       NULL, 0 },
     { "motion-activity-factor", required_argument, NULL, 0 },
     { "base-thresholds",      required_argument, NULL, 0 },

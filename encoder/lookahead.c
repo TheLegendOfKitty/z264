@@ -38,6 +38,7 @@
  */
 #include "common/common.h"
 #include "analyse.h"
+#include "lookahead-parallel.h"
 
 static void lookahead_shift( x264_sync_frame_list_t *dst, x264_sync_frame_list_t *src, int count )
 {
@@ -162,6 +163,15 @@ int x264_lookahead_init( x264_t *h, int i_slicetype_length )
         goto fail;
     look->b_thread_active = 1;
 
+    /* Initialize parallel lookahead if enabled */
+    if( h->param.analyse.b_parallel_lookahead )
+    {
+        if( x264_parallel_lookahead_init( h ) < 0 )
+            x264_log( h, X264_LOG_WARNING, "parallel lookahead init failed, falling back to serial\n" );
+        else if( x264_parallel_lookahead_start( h ) < 0 )
+            x264_log( h, X264_LOG_WARNING, "parallel lookahead start failed, falling back to serial\n" );
+    }
+
     return 0;
 fail:
     x264_free( look );
@@ -186,6 +196,8 @@ void x264_lookahead_delete( x264_t *h )
     if( h->lookahead->last_nonb )
         x264_frame_push_unused( h, h->lookahead->last_nonb );
     x264_sync_frame_list_delete( &h->lookahead->ofbuf );
+    if( h->lookahead_parallel )
+        x264_parallel_lookahead_delete( h );
     x264_free( h->lookahead );
 }
 

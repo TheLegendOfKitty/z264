@@ -32,6 +32,9 @@
 #include "ratecontrol.h"
 #include "macroblock.h"
 #include "me.h"
+#include "lookahead-parallel.h"
+#include "intra-fast.h"
+#include "ref-adaptive.h"
 #if HAVE_INTEL_DISPATCHER
 #include "extras/intel_dispatcher.h"
 #endif
@@ -1801,6 +1804,34 @@ x264_t *x264_encoder_open( x264_param_t *param, void *api )
 
     if( x264_lookahead_init( h, i_slicetype_length ) )
         goto fail;
+
+    /* Initialize parallel lookahead if enabled */
+    if( h->param.analyse.b_parallel_lookahead )
+    {
+        if( x264_parallel_lookahead_init( h ) < 0 )
+        {
+            x264_log( h, X264_LOG_WARNING, "parallel lookahead init failed, disabling\n" );
+            h->param.analyse.b_parallel_lookahead = 0;
+        }
+        else if( x264_parallel_lookahead_start( h ) < 0 )
+        {
+            x264_log( h, X264_LOG_WARNING, "parallel lookahead start failed, disabling\n" );
+            h->param.analyse.b_parallel_lookahead = 0;
+            x264_parallel_lookahead_delete( h );
+        }
+        else
+            x264_log( h, X264_LOG_INFO, "parallel lookahead: %d workers initialized\n", h->param.analyse.i_lookahead_workers );
+    }
+
+    /* Initialize fast intra prediction if enabled */
+    if( h->param.analyse.b_fast_intra )
+    {
+        x264_fast_intra_init( h );
+        x264_log( h, X264_LOG_INFO, "fast intra prediction enabled: complexity level %d\n", h->param.analyse.i_intra_complexity );
+    }
+
+    /* Initialize adaptive reference frame selection if enabled */
+    x264_adaptive_ref_init( h );
 
     for( int i = 0; i < h->param.i_threads; i++ )
         if( x264_macroblock_thread_allocate( h->thread[i], 0 ) < 0 )
@@ -4203,6 +4234,7 @@ void    x264_encoder_close  ( x264_t *h )
                    || h->stat.i_mb_count[SLICE_TYPE_B][I_PCM];
 
     x264_lookahead_delete( h );
+    x264_parallel_lookahead_delete( h );
 
 #if HAVE_OPENCL
     x264_opencl_lookahead_delete( h );

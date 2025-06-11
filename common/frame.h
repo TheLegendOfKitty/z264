@@ -177,6 +177,16 @@ typedef struct x264_frame
     uint8_t *mb_info;
     void (*mb_info_free)( void* );
 
+    /* adaptive reference frame scoring */
+    struct
+    {
+        float temporal_distance_factor;
+        float quality_score;
+        float motion_consistency;
+        float usage_history;
+        float combined_score;
+    } ref_score;
+
 #if HAVE_OPENCL
     x264_frame_opencl_t opencl;
 #endif

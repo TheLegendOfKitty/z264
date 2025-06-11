@@ -767,6 +767,52 @@ struct x264_t
     x264_bitstream_function_t bsf;
 
     x264_lookahead_t *lookahead;
+    struct x264_parallel_lookahead_t *lookahead_parallel;
+    
+    /* Fast intra prediction */
+    struct
+    {
+        /* Variance analysis */
+        int variance_threshold_low;
+        int variance_threshold_high;
+        
+        /* Gradient analysis for directional modes */
+        int gradient_threshold;
+        int directional_bias;
+        
+        /* Early termination thresholds */
+        int early_term_threshold;
+        int planar_dc_bias;
+        
+        /* Content type detection */
+        int smooth_region_threshold;
+        int edge_density_threshold;
+        
+        /* Mode filtering parameters */
+        int max_modes_4x4;
+        int max_modes_8x8;
+        int max_modes_16x16;
+        
+    } fast_intra;
+
+    /* Adaptive reference frame selection */
+    struct
+    {
+        int enabled;
+        int max_temporal_distance;
+        float temporal_distance_weight;
+        float quality_weight;
+        float motion_weight;
+        float usage_weight;
+        int min_refs;
+        int max_refs;
+        float score_threshold;
+        float low_motion_factor;
+        float high_motion_factor;
+        int frame_count;
+        float avg_motion_magnitude;
+        float recent_ref_usage[16];
+    } adaptive_ref;
 
 #if HAVE_OPENCL
     x264_opencl_t opencl;

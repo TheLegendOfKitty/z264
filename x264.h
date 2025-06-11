@@ -427,6 +427,21 @@ typedef struct x264_param_t
         float        f_motion_activity_factor; /* Scale factor based on recent ME costs (0.5-2.0) */
         int          i_base_thresholds[3]; /* Base thresholds for adaptation [100, 400, 1000] */
         int          i_me_stats_window; /* Window size for motion estimation statistics (default: 32) */
+        
+        /* Parallel lookahead parameters */
+        int          b_parallel_lookahead; /* Enable parallel lookahead processing */
+        int          i_lookahead_workers; /* Number of lookahead worker threads (0=auto) */
+        
+        /* Fast intra prediction parameters */
+        int          b_fast_intra; /* Enable fast intra prediction with early termination */
+        int          i_intra_complexity; /* Intra complexity level: 0=fastest, 3=slowest */
+        float        f_intra_variance_bias; /* Bias for variance-based mode filtering (0.5-2.0) */
+        
+        /* Adaptive reference frame selection parameters */
+        int          b_adaptive_ref; /* Enable adaptive reference frame selection */
+        int          i_adaptive_ref_temporal_distance; /* Maximum temporal distance for reference scoring */
+        float        f_adaptive_ref_threshold; /* Score threshold for reference inclusion */
+        
         int          b_chroma_me; /* chroma ME for subpel and mode decision in P-frames */
         int          b_mixed_references; /* allow each mb partition to have its own reference number */
         int          i_trellis;  /* trellis RD quantization */

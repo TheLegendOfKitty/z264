@@ -28,6 +28,7 @@
 #include "common/common.h"
 #include "macroblock.h"
 #include "me.h"
+#include "lookahead-parallel.h"
 
 // Indexed by pic_struct values
 static const uint8_t delta_tfi_divisor[10] = { 0, 2, 1, 1, 2, 2, 3, 3, 4, 6 };
@@ -868,6 +869,21 @@ static int slicetype_frame_cost( x264_t *h, x264_mb_analysis_t *a,
 
         if( p1 != p0 )
             dist_scale_factor = ( ((b-p0) << 8) + ((p1-p0) >> 1) ) / (p1-p0);
+        
+        /* Try parallel motion search if available and beneficial */
+        if( h->lookahead_parallel && h->param.analyse.b_parallel_lookahead && 
+            !h->param.b_opencl && h->mb.i_mb_count > 256 )
+        {
+            int parallel_cost = x264_parallel_lookahead_motion_search( h, frames, p0, p1, b );
+            if( parallel_cost >= 0 )
+            {
+                /* Parallel search succeeded, use the results */
+                i_score = parallel_cost;
+                fenc->i_cost_est[b-p0][p1-b] = i_score;
+                return i_score;
+            }
+            /* Fall back to serial processing if parallel failed */
+        }
 
         int output_buf_size = h->mb.i_mb_height + (NUM_INTS + PAD_SIZE) * h->param.i_lookahead_threads;
         int *output_inter[X264_LOOKAHEAD_THREAD_MAX+1];

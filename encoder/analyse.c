@@ -27,6 +27,8 @@
 
 #include "common/common.h"
 #include "macroblock.h"
+#include "intra-fast.h"
+#include "ref-adaptive.h"
 #include "me.h"
 #include "ratecontrol.h"
 #include "analyse.h"
@@ -670,6 +672,9 @@ static void mb_analyse_intra( x264_t *h, x264_mb_analysis_t *a, int i_satd_inter
     const unsigned int flags = h->sh.i_type == SLICE_TYPE_I ? h->param.analyse.intra : h->param.analyse.inter;
     pixel *p_src = h->mb.pic.p_fenc[0];
     pixel *p_dst = h->mb.pic.p_fdec[0];
+    
+    /* Enhanced fast intra prediction from SVT-AV1 */
+    int fast_intra_enabled = h->param.analyse.b_fast_intra && a->b_fast_intra;
     static const int8_t intra_analysis_shortcut[2][2][2][5] =
     {
         {{{I_PRED_4x4_HU, -1, -1, -1, -1},
@@ -690,6 +695,16 @@ static void mb_analyse_intra( x264_t *h, x264_mb_analysis_t *a, int i_satd_inter
     if( !h->param.i_avcintra_class )
     {
         const int8_t *predict_mode = predict_16x16_mode_available( h->mb.i_neighbour_intra );
+        
+        /* Use fast intra prediction to filter 16x16 modes */
+        int filtered_modes[4];
+        int mode_count = 4;
+        if( fast_intra_enabled )
+        {
+            mode_count = x264_fast_intra_filter_modes_16x16( h, p_src, FENC_STRIDE, filtered_modes, h->fast_intra.max_modes_16x16 );
+            if( mode_count > 0 )
+                predict_mode = (const int8_t*)filtered_modes;
+        }
 
         /* Not heavily tuned */
         static const uint8_t i16x16_thresh_lut[11] = { 2, 2, 2, 3, 3, 4, 4, 4, 4, 4, 4 };
@@ -766,6 +781,17 @@ static void mb_analyse_intra( x264_t *h, x264_mb_analysis_t *a, int i_satd_inter
             int i_pred_mode = x264_mb_predict_intra4x4_mode( h, 4*idx );
 
             const int8_t *predict_mode = predict_8x8_mode_available( a->b_avoid_topright, h->mb.i_neighbour8[idx], idx );
+            
+            /* Use fast intra prediction to filter 8x8 modes */
+            int filtered_modes[9];
+            int mode_count = 9;
+            if( fast_intra_enabled )
+            {
+                mode_count = x264_fast_intra_filter_modes_8x8( h, p_src_by, FENC_STRIDE, filtered_modes, h->fast_intra.max_modes_8x8 );
+                if( mode_count > 0 )
+                    predict_mode = (const int8_t*)filtered_modes;
+            }
+            
             h->predict_8x8_filter( p_dst_by, edge, h->mb.i_neighbour8[idx], ALL_NEIGHBORS );
 
             if( h->pixf.intra_mbcmp_x9_8x8 && predict_mode[8] >= 0 )
@@ -882,6 +908,16 @@ static void mb_analyse_intra( x264_t *h, x264_mb_analysis_t *a, int i_satd_inter
             int i_pred_mode = x264_mb_predict_intra4x4_mode( h, idx );
 
             const int8_t *predict_mode = predict_4x4_mode_available( a->b_avoid_topright, h->mb.i_neighbour4[idx], idx );
+            
+            /* Use fast intra prediction to filter 4x4 modes */
+            int filtered_modes[9];
+            int mode_count = 9;
+            if( fast_intra_enabled )
+            {
+                mode_count = x264_fast_intra_filter_modes_4x4( h, p_src_by, FENC_STRIDE, filtered_modes, h->fast_intra.max_modes_4x4 );
+                if( mode_count > 0 )
+                    predict_mode = (const int8_t*)filtered_modes;
+            }
 
             if( (h->mb.i_neighbour4[idx] & (MB_TOPRIGHT|MB_TOP)) == MB_TOP )
                 /* emulate missing topright samples */
@@ -1264,9 +1300,17 @@ static void mb_analyse_inter_p16x16( x264_t *h, x264_mb_analysis_t *a )
     m.i_pixel = PIXEL_16x16;
     LOAD_FENC( &m, h->mb.pic.p_fenc, 0, 0 );
 
+    /* Update adaptive reference scores */
+    x264_adaptive_ref_update_scores( h, 0 );
+    
+    /* Get filtered reference list */
+    int ref_list[16];
+    int num_refs_to_check = x264_adaptive_ref_filter_list( h, 0, ref_list, h->mb.pic.i_fref[0] );
+
     a->l0.me16x16.cost = INT_MAX;
-    for( int i_ref = 0; i_ref < h->mb.pic.i_fref[0]; i_ref++ )
+    for( int i = 0; i < num_refs_to_check; i++ )
     {
+        int i_ref = ref_list[i];
         m.i_ref_cost = REF_COST( 0, i_ref );
         i_halfpel_thresh -= m.i_ref_cost;
 
@@ -1312,6 +1356,10 @@ static void mb_analyse_inter_p16x16( x264_t *h, x264_mb_analysis_t *a )
         if( m.cost < a->l0.me16x16.cost )
             h->mc.memcpy_aligned( &a->l0.me16x16, &m, sizeof(x264_me_t) );
     }
+
+    /* Update adaptive reference usage statistics */
+    x264_adaptive_ref_update_usage( h, 0, a->l0.me16x16.i_ref );
+    x264_adaptive_ref_update_motion_stats( h, a->l0.me16x16.mv );
 
     x264_macroblock_cache_ref( h, 0, 0, 4, 4, 0, a->l0.me16x16.i_ref );
     assert( a->l0.me16x16.mv[1] <= h->mb.mv_max_spel[1] || h->i_thread_frames == 1 );

@@ -459,6 +459,21 @@ REALIGN_STACK void x264_param_default( x264_param_t *param )
     param->analyse.i_base_thresholds[1] = 400;      /* Base medium variance threshold */
     param->analyse.i_base_thresholds[2] = 1000;     /* Base high variance threshold */
     param->analyse.i_me_stats_window = 32;          /* Statistics window size */
+    
+    /* Parallel lookahead parameters */
+    param->analyse.b_parallel_lookahead = 0;        /* Disabled by default */
+    param->analyse.i_lookahead_workers = 0;         /* Auto-detect */
+    
+    /* Fast intra prediction parameters */
+    param->analyse.b_fast_intra = 0;                /* Disabled by default */
+    param->analyse.i_intra_complexity = 2;          /* Balanced complexity */
+    param->analyse.f_intra_variance_bias = 1.0f;    /* Neutral bias */
+    
+    /* Adaptive reference frame selection parameters */
+    param->analyse.b_adaptive_ref = 0;              /* Disabled by default */
+    param->analyse.i_adaptive_ref_temporal_distance = 8;  /* Maximum temporal distance */
+    param->analyse.f_adaptive_ref_threshold = 0.5f; /* Score threshold for inclusion */
+    
     param->analyse.i_subpel_refine = 7;
     param->analyse.b_mixed_references = 1;
     param->analyse.b_chroma_me = 1;
@@ -1316,6 +1331,22 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
     }
     OPT("me-stats-window")
         p->analyse.i_me_stats_window = atoi(value);
+    OPT("parallel-lookahead")
+        p->analyse.b_parallel_lookahead = atobool(value);
+    OPT("lookahead-workers")
+        p->analyse.i_lookahead_workers = atoi(value);
+    OPT("fast-intra")
+        p->analyse.b_fast_intra = atobool(value);
+    OPT("intra-complexity")
+        p->analyse.i_intra_complexity = x264_clip3( atoi(value), 0, 3 );
+    OPT("intra-variance-bias")
+        p->analyse.f_intra_variance_bias = atof(value);
+    OPT("adaptive-ref")
+        p->analyse.b_adaptive_ref = atobool(value);
+    OPT("adaptive-ref-temporal")
+        p->analyse.i_adaptive_ref_temporal_distance = atoi(value);
+    OPT("adaptive-ref-threshold")
+        p->analyse.f_adaptive_ref_threshold = atof(value);
     OPT2("mvrange", "mv-range")
         p->analyse.i_mv_range = atoi(value);
     OPT2("mvrange-thread", "mv-range-thread")
