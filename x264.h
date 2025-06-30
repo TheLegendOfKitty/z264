@@ -426,6 +426,13 @@ typedef struct x264_param_t
         float        f_psy_trellis; /* Psy trellis strength */
         int          b_psy; /* Toggle all psy optimizations */
 
+        /* Butteraugli perceptual optimization */
+        int          b_butteraugli; /* Enable butteraugli perceptual optimization */
+        float        f_butteraugli_distance; /* Target butteraugli distance (0.5-3.0, default: 1.0) */
+        float        f_butteraugli_strength; /* Influence on RD decisions (0.0-1.0, default: 0.5) */
+        int          i_butteraugli_aq_mode; /* 0=off, 1=variance, 2=autovariance (default: 2) */
+        int          i_butteraugli_norm; /* 3=L3, 12=L12, 99=max (default: auto by QP) */
+
         int          b_mb_info;            /* Use input mb_info data in x264_picture_t */
         int          b_mb_info_update; /* Update the values in mb_info according to the results of encoding. */
 

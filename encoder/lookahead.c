@@ -69,6 +69,50 @@ static void lookahead_slicetype_decide( x264_t *h )
 {
     x264_slicetype_decide( h );
 
+#if HAVE_BUTTERAUGLI
+    /* Perform butteraugli analysis if enabled */
+    if( h->butteraugli && h->lookahead->next.i_size > 0 )
+    {
+        x264_frame_t *fenc = h->lookahead->next.list[0];
+        x264_frame_t *ref = h->lookahead->last_nonb;
+        
+        if( ref && ref->i_type != X264_TYPE_IDR )
+        {
+            /* Compute butteraugli visual mask for adaptive quantization */
+            const uint8_t *ref_yuv[3] = { ref->plane[0], ref->plane[1], ref->plane[2] };
+            int ref_stride[3] = { ref->i_stride[0], ref->i_stride[1], ref->i_stride[2] };
+            
+            float *mask = x264_malloc( h->param.i_width * h->param.i_height * sizeof(float) );
+            if( mask )
+            {
+                x264_butteraugli_visual_mask( h->butteraugli, ref_yuv, ref_stride, mask, h->param.i_width );
+                
+                /* Downsample mask to macroblock resolution and store in weights */
+                for( int mb_y = 0; mb_y < h->mb.i_mb_height; mb_y++ )
+                {
+                    for( int mb_x = 0; mb_x < h->mb.i_mb_width; mb_x++ )
+                    {
+                        /* Average mask values over macroblock */
+                        float sum = 0.0f;
+                        int count = 0;
+                        for( int y = mb_y * 16; y < (mb_y + 1) * 16 && y < h->param.i_height; y++ )
+                        {
+                            for( int x = mb_x * 16; x < (mb_x + 1) * 16 && x < h->param.i_width; x++ )
+                            {
+                                sum += mask[y * h->param.i_width + x];
+                                count++;
+                            }
+                        }
+                        h->butteraugli_weights[mb_y * h->butteraugli_weights_stride + mb_x] = sum / count;
+                    }
+                }
+                
+                x264_free( mask );
+            }
+        }
+    }
+#endif
+
     lookahead_update_last_nonb( h, h->lookahead->next.list[0] );
     int shift_frames = h->lookahead->next.list[0]->i_bframes + 1;
 

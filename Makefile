@@ -62,6 +62,11 @@ ifneq ($(findstring HAVE_AVS 1, $(CONFIG)),)
 SRCCLI += input/avs.c
 endif
 
+ifneq ($(findstring HAVE_BUTTERAUGLI 1, $(CONFIG)),)
+SRCS_X += common/butteraugli.c
+SRCSXX = common/butteraugli_wrapper.cc third_party/butteraugli/butteraugli/butteraugli.cc
+endif
+
 ifneq ($(findstring HAVE_THREAD 1, $(CONFIG)),)
 SRCS_X   += common/threadpool.c
 SRCCLI_X += input/thread.c
@@ -259,6 +264,10 @@ OBJCLI += $(SRCCLI:%.c=%.o)
 OBJSO  += $(SRCSO:%.c=%.o)
 OBJEXAMPLE += $(SRCEXAMPLE:%.c=%.o)
 
+ifneq ($(SRCSXX),)
+OBJS += $(SRCSXX:%.cc=%.o)
+endif
+
 ifneq ($(findstring HAVE_BITDEPTH8 1, $(CONFIG)),)
 OBJS      += $(SRCS_X:%.c=%-8.o) $(SRCS_8:%.c=%-8.o)
 OBJCLI    += $(SRCCLI_X:%.c=%-8.o)
@@ -317,6 +326,13 @@ $(ALLOBJS): $(GENERATED)
 %.o: %.c
 	$(DEPCMD)
 	$(CC) $(CFLAGS) -c $< $(CC_O) $(DEPFLAGS)
+
+# Create CXXFLAGS by removing C-specific flags from CFLAGS
+CXXFLAGS = $(filter-out -std=gnu99,$(CFLAGS))
+
+%.o: %.cc
+	$(DEPCMD)
+	$(CXX) $(CXXFLAGS) -c $< $(CC_O) $(DEPFLAGS)
 
 %-8.o: %.c
 	$(DEPCMD)

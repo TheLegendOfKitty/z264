@@ -819,6 +819,22 @@ static void help( x264_param_t *defaults, int longhelp )
                                        defaults->analyse.f_psy_rd, defaults->analyse.f_psy_trellis );
     H2( "      --no-psy                Disable all visual optimizations that worsen\n"
         "                              both PSNR and SSIM.\n" );
+#if HAVE_BUTTERAUGLI
+    H1( "      --butteraugli           Enable butteraugli perceptual optimization\n" );
+    H2( "      --no-butteraugli        Disable butteraugli perceptual optimization\n" );
+    H2( "      --butteraugli-distance <float> Target butteraugli distance [%.1f]\n"
+        "                                  Range: 0.5-3.0 (lower = higher quality)\n", defaults->analyse.f_butteraugli_distance );
+    H2( "      --butteraugli-strength <float> Influence on RD decisions [%.1f]\n"
+        "                                  Range: 0.0-1.0 (higher = stronger influence)\n", defaults->analyse.f_butteraugli_strength );
+    H2( "      --butteraugli-aq-mode <int> Adaptive quantization mode [%d]\n"
+        "                                  - 0: off\n"
+        "                                  - 1: variance based\n"
+        "                                  - 2: auto-variance\n", defaults->analyse.i_butteraugli_aq_mode );
+    H2( "      --butteraugli-norm <int> Error norm for quality assessment [auto]\n"
+        "                                  - 3: L3 norm\n"
+        "                                  - 12: L12 norm\n"
+        "                                  - 99: max norm\n" );
+#endif
     H2( "      --no-mixed-refs         Don't decide references on a per partition basis\n" );
     H2( "      --no-chroma-me          Ignore chroma in motion estimation\n" );
     H1( "      --no-8x8dct             Disable adaptive spatial transform size\n" );
@@ -1085,6 +1101,12 @@ static struct option long_options[] =
     { "psy-rd",               required_argument, NULL, 0 },
     { "no-psy",               no_argument,       NULL, 0 },
     { "psy",                  no_argument,       NULL, 0 },
+    { "butteraugli",          no_argument,       NULL, 0 },
+    { "no-butteraugli",       no_argument,       NULL, 0 },
+    { "butteraugli-distance", required_argument, NULL, 0 },
+    { "butteraugli-strength", required_argument, NULL, 0 },
+    { "butteraugli-aq-mode",  required_argument, NULL, 0 },
+    { "butteraugli-norm",     required_argument, NULL, 0 },
     { "mixed-refs",           no_argument,       NULL, 0 },
     { "no-mixed-refs",        no_argument,       NULL, 0 },
     { "no-chroma-me",         no_argument,       NULL, 0 },

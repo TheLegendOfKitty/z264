@@ -144,7 +144,26 @@ static inline int ssd_plane( x264_t *h, int size, int p, int x, int y )
         int64_t tmp = ((int64_t)satd * h->mb.i_psy_rd * h->mb.i_psy_rd_lambda + 128) >> 8;
         satd = X264_MIN( tmp, COST_MAX );
     }
-    return h->pixf.ssd[size](fenc, FENC_STRIDE, fdec, FDEC_STRIDE) + satd;
+    
+    int ssd = h->pixf.ssd[size](fenc, FENC_STRIDE, fdec, FDEC_STRIDE) + satd;
+    
+#if HAVE_BUTTERAUGLI
+    /* Apply butteraugli perceptual weight if enabled */
+    if( p == 0 && h->param.analyse.b_butteraugli && h->butteraugli_weights )
+    {
+        int mb_x = h->mb.i_mb_x;
+        int mb_y = h->mb.i_mb_y;
+        
+        /* Get weight for current macroblock */
+        float weight = h->butteraugli_weights[mb_y * h->butteraugli_weights_stride + mb_x];
+        
+        /* Apply weight with strength factor */
+        float factor = 1.0f + (weight - 1.0f) * h->param.analyse.f_butteraugli_strength;
+        ssd = (int)(ssd * factor);
+    }
+#endif
+    
+    return ssd;
 }
 
 static inline int ssd_mb( x264_t *h )

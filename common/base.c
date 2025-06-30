@@ -440,6 +440,13 @@ REALIGN_STACK void x264_param_default( x264_param_t *param )
     param->analyse.f_psy_rd = 1.0;
     param->analyse.b_psy = 1;
     param->analyse.f_psy_trellis = 0;
+#if HAVE_BUTTERAUGLI
+    param->analyse.b_butteraugli = 0;
+    param->analyse.f_butteraugli_distance = 1.0;
+    param->analyse.f_butteraugli_strength = 0.5;
+    param->analyse.i_butteraugli_aq_mode = 2;
+    param->analyse.i_butteraugli_norm = 0; /* 0 = auto */
+#endif
     param->analyse.i_me_range = 16;
     param->analyse.i_subpel_refine = 7;
     param->analyse.b_mixed_references = 1;
@@ -1289,6 +1296,18 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
     }
     OPT("psy")
         p->analyse.b_psy = atobool(value);
+#if HAVE_BUTTERAUGLI
+    OPT("butteraugli")
+        p->analyse.b_butteraugli = atobool(value);
+    OPT("butteraugli-distance")
+        p->analyse.f_butteraugli_distance = atof(value);
+    OPT("butteraugli-strength")
+        p->analyse.f_butteraugli_strength = atof(value);
+    OPT("butteraugli-aq-mode")
+        p->analyse.i_butteraugli_aq_mode = atoi(value);
+    OPT("butteraugli-norm")
+        p->analyse.i_butteraugli_norm = atoi(value);
+#endif
     OPT("chroma-me")
         p->analyse.b_chroma_me = atobool(value);
     OPT("mixed-refs")

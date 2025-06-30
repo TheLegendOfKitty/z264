@@ -28,6 +28,9 @@
 #define X264_COMMON_H
 
 #include "base.h"
+#if HAVE_BUTTERAUGLI
+#include "butteraugli.h"
+#endif
 
 /* Macros for templating function calls according to bit depth */
 #define x264_template(w) x264_glue3(x264, BIT_DEPTH, w)
@@ -759,6 +762,13 @@ struct x264_t
 
 #if HAVE_OPENCL
     x264_opencl_t opencl;
+#endif
+
+#if HAVE_BUTTERAUGLI
+    /* Butteraugli perceptual quality context */
+    struct x264_butteraugli_t *butteraugli;
+    float *butteraugli_weights;  /* Per-MB perceptual weights */
+    int butteraugli_weights_stride;
 #endif
 };
 

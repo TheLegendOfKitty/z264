@@ -1802,6 +1802,36 @@ x264_t *x264_encoder_open( x264_param_t *param, void *api )
     if( x264_lookahead_init( h, i_slicetype_length ) )
         goto fail;
 
+#if HAVE_BUTTERAUGLI
+    /* Initialize butteraugli if enabled */
+    if( h->param.analyse.b_butteraugli )
+    {
+        h->butteraugli = x264_butteraugli_create( h->param.i_width, h->param.i_height, h->param.i_threads );
+        if( !h->butteraugli )
+        {
+            x264_log( h, X264_LOG_ERROR, "failed to initialize butteraugli\n" );
+            goto fail;
+        }
+        
+        /* Configure butteraugli */
+        x264_butteraugli_config_t config = {
+            .target_distance = h->param.analyse.f_butteraugli_distance,
+            .strength = h->param.analyse.f_butteraugli_strength,
+            .aq_mode = h->param.analyse.i_butteraugli_aq_mode,
+            .norm = h->param.analyse.i_butteraugli_norm,
+            .enable_heatmap = 0
+        };
+        x264_butteraugli_configure( h->butteraugli, &config );
+        
+        /* Allocate perceptual weight map */
+        h->butteraugli_weights_stride = h->mb.i_mb_width;
+        CHECKED_MALLOC( h->butteraugli_weights, h->butteraugli_weights_stride * h->mb.i_mb_height * sizeof(float) );
+        
+        x264_log( h, X264_LOG_INFO, "butteraugli perceptual optimization enabled (distance=%.1f, strength=%.1f)\n",
+                  h->param.analyse.f_butteraugli_distance, h->param.analyse.f_butteraugli_strength );
+    }
+#endif
+
     for( int i = 0; i < h->param.i_threads; i++ )
         if( x264_macroblock_thread_allocate( h->thread[i], 0 ) < 0 )
             goto fail;
@@ -4207,6 +4237,19 @@ void    x264_encoder_close  ( x264_t *h )
 #if HAVE_OPENCL
     x264_opencl_lookahead_delete( h );
     x264_opencl_function_t *ocl = h->opencl.ocl;
+#endif
+
+#if HAVE_BUTTERAUGLI
+    if( h->butteraugli )
+    {
+        x264_butteraugli_destroy( h->butteraugli );
+        h->butteraugli = NULL;
+    }
+    if( h->butteraugli_weights )
+    {
+        x264_free( h->butteraugli_weights );
+        h->butteraugli_weights = NULL;
+    }
 #endif
 
     if( h->param.b_sliced_threads )

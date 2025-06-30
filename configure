@@ -55,6 +55,7 @@ External library support:
   --disable-lavf           disable libavformat support
   --disable-ffms           disable ffmpegsource support
   --disable-gpac           disable gpac support
+  --disable-butteraugli    disable butteraugli perceptual metric support
   --disable-lsmash         disable lsmash support
 
 EOF
@@ -387,6 +388,7 @@ ffms="auto"
 gpac="auto"
 lsmash="auto"
 mp4="no"
+butteraugli="auto"
 gpl="yes"
 thread="auto"
 swscale="auto"
@@ -426,7 +428,8 @@ CONFIG_HAVE="MALLOC_H ALTIVEC ALTIVEC_H MMX ARMV6 ARMV6T2 NEON AARCH64 BEOSTHREA
              MSA LSX MMAP WINRT VSX ARM_INLINE_ASM STRTOK_R CLOCK_GETTIME BITDEPTH8 BITDEPTH10 ELF_AUX_INFO GETAUXVAL \
              SYSCONF SYNC_FETCH_AND_ADD \
              DOTPROD I8MM SVE SVE2 \
-             AS_ARCHEXT_DOTPROD_DIRECTIVE AS_ARCHEXT_I8MM_DIRECTIVE AS_ARCHEXT_SVE_DIRECTIVE AS_ARCHEXT_SVE2_DIRECTIVE"
+             AS_ARCHEXT_DOTPROD_DIRECTIVE AS_ARCHEXT_I8MM_DIRECTIVE AS_ARCHEXT_SVE_DIRECTIVE AS_ARCHEXT_SVE2_DIRECTIVE \
+             BUTTERAUGLI"
 
 # parse options
 
@@ -486,6 +489,9 @@ for opt do
             ;;
         --disable-gpac)
             gpac="no"
+            ;;
+        --disable-butteraugli)
+            butteraugli="no"
             ;;
         --disable-lsmash)
             lsmash="no"
@@ -570,6 +576,7 @@ done
 [ "$cli" = "no" -a "$shared" = "no" -a "$static" = "no" ] && die "Nothing to build. Enable cli, shared or static."
 
 CC="${CC-${cross_prefix}gcc}"
+CXX="${CXX-${cross_prefix}g++}"
 STRIP="${STRIP-${cross_prefix}strip}"
 STRINGS="${STRINGS-${cross_prefix}strings}"
 INSTALL="${INSTALL-install}"
@@ -1306,6 +1313,30 @@ if [ "$swscale" = "yes" ]; then
     fi
 fi
 
+if [ "$butteraugli" = "auto" ] ; then
+    butteraugli="no"
+    
+    # Check for bundled butteraugli first
+    if [ -d "$SRCPATH/third_party/butteraugli" ] ; then
+        BUTTERAUGLI_CFLAGS="-I$SRCPATH/third_party/butteraugli"
+        butteraugli="yes"
+        echo "Using bundled butteraugli library"
+    else
+        # Try pkg-config
+        if pkg_check butteraugli ; then
+            BUTTERAUGLI_LIBS="$BUTTERAUGLI_LIBS $($PKGCONFIG --libs butteraugli)"
+            BUTTERAUGLI_CFLAGS="$BUTTERAUGLI_CFLAGS $($PKGCONFIG --cflags butteraugli)"
+            butteraugli="yes"
+        fi
+    fi
+    
+    if [ "$butteraugli" = "yes" ]; then
+        echo "butteraugli support enabled"
+    else
+        echo "Warning: butteraugli not found, perceptual quality optimization disabled"
+    fi
+fi
+
 if [ "$lsmash" = "auto" ] ; then
     lsmash="no"
     if pkg_check liblsmash ; then
@@ -1356,6 +1387,12 @@ if [ "$gpac" = "auto" -a "$lsmash" != "yes" ] ; then
             echo "Warning: gpac is too old, update to v0.8.0 or later"
         fi
     fi
+fi
+
+if [ "$butteraugli" = "yes" ] ; then
+    LDFLAGS="-lstdc++ $LDFLAGS"
+    CFLAGS="$CFLAGS $BUTTERAUGLI_CFLAGS"
+    define HAVE_BUTTERAUGLI
 fi
 
 if [ "$lsmash" = "yes" ] ; then
@@ -1605,6 +1642,7 @@ includedir=$includedir
 SYS_ARCH=$ARCH
 SYS=$SYS
 CC=$CC
+CXX=$CXX
 CFLAGS=$CFLAGS
 CFLAGSSO=$CFLAGSSO
 CFLAGSCLI=$CFLAGSCLI
