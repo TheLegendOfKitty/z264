@@ -998,10 +998,12 @@ cglobal butteraugli_compute_visual_mask_avx2, 8,12,8
     ; Apply exponential mapping: 1 + exp(-variance * 100)
     vmulss      xm3, xm3, [scale_100]   ; -variance * 100
     ; Simple exp approximation: 1/(1 + x) for negative x
-    vsubss      xm3, [zeros], xm3       ; -(-variance * 100) = variance * 100
-    vaddss      xm3, xm3, [ones]        ; 1 + variance * 100
-    vdivss      xm3, [ones], xm3        ; 1 / (1 + variance * 100)
-    vaddss      xm3, xm3, [ones]        ; 1 + exp_approx
+    vmovss      xm4, [zeros]
+    vsubss      xm3, xm4, xm3           ; -(-variance * 100) = variance * 100
+    vmovss      xm4, [ones]
+    vaddss      xm3, xm3, xm4           ; 1 + variance * 100
+    vdivss      xm3, xm4, xm3           ; 1 / (1 + variance * 100)
+    vaddss      xm3, xm3, xm4           ; 1 + exp_approx
     
     ; Clamp to range [0.5, 2.0]
     vmaxss      xm3, xm3, [min_mask_val]
