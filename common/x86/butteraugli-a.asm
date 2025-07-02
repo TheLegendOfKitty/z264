@@ -129,8 +129,10 @@ cglobal butteraugli_yuv_to_rgb_sse2_bt601, 10,11,8
     movq        xmm0, [r0 + rax]        ; Y values
     
     ; Load 4 U and V values (for 4 pixels in 4:2:0)
-    movd        m1, [r1 + rax/2]       ; Load 4 U values
-    movd        m2, [r2 + rax/2]       ; Load 4 V values
+    mov         rdx, rax
+    shr         rdx, 1                  ; rdx = rax/2
+    movd        m1, [r1 + rdx]         ; Load 4 U values
+    movd        m2, [r2 + rdx]         ; Load 4 V values
     
     ; Unpack and duplicate chroma for 2x2 blocks (4:2:0 to 4:4:4)
     punpcklbw   m1, m1                  ; U0U0 U1U1 U2U2 U3U3
@@ -167,7 +169,9 @@ cglobal butteraugli_yuv_to_rgb_sse2_bt601, 10,11,8
     packuswb    m1, m1                  ; clamp to 0-255
     
     ; Reload U for B calculation  
-    movd        xmm2, [r1 + rax/2]
+    mov         rdx, rax
+    shr         rdx, 1                  ; rdx = rax/2
+    movd        xmm2, [r1 + rdx]
     punpcklbw   m2, m2
     psubb       m2, [uv_offset]
     punpcklbw   m3, m2, m2              ; Duplicate sign bits for U
@@ -221,8 +225,10 @@ cglobal butteraugli_yuv_to_rgb_avx2_bt601, 10,11,15
     vmovdqu     xm0, [r0 + rax]        ; Y values (16 pixels)
     
     ; Load 8 U and V values (for 16 pixels in 4:2:0)
-    vmovq       xm1, [r1 + rax/2]      ; U values (8 pixels)
-    vmovq       xm2, [r2 + rax/2]      ; V values (8 pixels)
+    mov         rdx, rax
+    shr         rdx, 1                  ; rdx = rax/2
+    vmovq       xm1, [r1 + rdx]        ; U values (8 pixels)
+    vmovq       xm2, [r2 + rdx]        ; V values (8 pixels)
     
     ; Duplicate chroma for 2x2 blocks (4:2:0 to 4:4:4)
     vpunpcklbw  xm3, xm1, xm1           ; duplicate U low bytes
