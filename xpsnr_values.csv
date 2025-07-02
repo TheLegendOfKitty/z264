@@ -1,0 +1,9 @@
+QP,Type,XPSNR_Y
+18,baseline,40
+18,butteraugli,39
+22,baseline,XPSNR
+22,butteraugli,XPSNR
+26,baseline,XPSNR
+26,butteraugli,40
+30,baseline,XPSNR
+30,butteraugli,XPSNR

@@ -1,0 +1,11 @@
+CXX = g++
+CXXFLAGS = -std=c++11 -O2 -Wall
+INCLUDES = -I. -Ithird_party/butteraugli
+
+simple_butteraugli_test: simple_butteraugli_test.cc third_party/butteraugli/butteraugli/butteraugli.cc
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
+
+clean:
+	rm -f simple_butteraugli_test
+
+.PHONY: clean

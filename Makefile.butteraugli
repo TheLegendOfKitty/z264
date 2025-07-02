@@ -1,0 +1,19 @@
+CXX = g++
+CXXFLAGS = -std=c++11 -O2 -Wall
+INCLUDES = -I. -Ithird_party/butteraugli -I/opt/homebrew/Cellar/ffmpeg/7.1.1_3/include
+LIBS = -L/opt/homebrew/Cellar/ffmpeg/7.1.1_3/lib -lavformat -lavcodec -lavutil -lswscale
+
+# Butteraugli sources
+BUTTERAUGLI_SRCS = common/butteraugli_wrapper.cc third_party/butteraugli/butteraugli/butteraugli.cc
+
+# Compile C code separately
+common/butteraugli.o: common/butteraugli.c
+	gcc -c -O2 -Wall -I. -o $@ $<
+
+calculate_butteraugli_scores: calculate_butteraugli_scores.cc $(BUTTERAUGLI_SRCS) common/butteraugli.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
+
+clean:
+	rm -f calculate_butteraugli_scores
+
+.PHONY: clean

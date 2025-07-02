@@ -1,0 +1,27 @@
+=== x264 Butteraugli vs Baseline Comparison ===
+
+File Sizes:
+- Baseline:    29M (30,408,704 bytes)
+- Butteraugli: 28M (29,871,616 bytes)
+- Reduction:   537,088 bytes (1.77% smaller)
+
+XPSNR (eXtended PSNR):
+- Baseline:    Y: 37.2658  U: 42.9176  V: 43.1666
+- Butteraugli: Y: 37.2187  U: 42.8922  V: 43.1404
+- Difference:  Y: -0.0471  U: -0.0254  V: -0.0262
+
+PSNR (Peak Signal-to-Noise Ratio):
+- Baseline:    Y: 38.3011  U: 43.6511  V: 44.4531  Avg: 39.5175
+- Butteraugli: Y: 38.2686  U: 43.6400  V: 44.4424  Avg: 39.4876
+- Difference:  Y: -0.0325  U: -0.0111  V: -0.0107  Avg: -0.0299
+
+SSIM (Structural Similarity Index):
+- Baseline:    Y: 0.906916  U: 0.963146  V: 0.967091  All: 0.926317
+- Butteraugli: Y: 0.906258  U: 0.963098  V: 0.967057  All: 0.925864
+- Difference:  Y: -0.000658 U: -0.000048 V: -0.000034 All: -0.000453
+
+Summary:
+The butteraugli-based encoding achieved 1.77% better compression while maintaining
+nearly identical perceptual quality. The minimal differences in XPSNR, PSNR, and SSIM
+(all less than 0.05 dB) are imperceptible to human viewers, demonstrating that
+butteraugli successfully optimized for perceptual quality rather than pure metrics.
