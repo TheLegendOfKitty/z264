@@ -323,6 +323,7 @@ INIT_XMM sse2
 cglobal butteraugli_srgb_to_linear_sse2, 5,7,8
     mov         r5d, r3d                ; height
     lea         r6, [srgb_to_linear_lut]
+    pxor        m7, m7                  ; zero register for unpacking
     
 .loop_y:
     xor         eax, eax                ; x = 0
@@ -330,22 +331,23 @@ cglobal butteraugli_srgb_to_linear_sse2, 5,7,8
 .loop_x:
     ; Load 4 sRGB values
     movd        m0, [r0 + rax]          ; load 4 bytes
-    pmovzxbd    m0, m0                  ; zero extend bytes to dwords
+    punpcklbw   m0, m7                  ; zero extend bytes to words (using m7 as zero)
+    punpcklwd   m0, m7                  ; zero extend words to dwords
     
-    ; Extract individual dword indices and lookup in table
-    movd        edx, m0
+    ; Extract individual bytes and lookup in table
+    movzx       edx, byte [r0 + rax]
     movss       m1, [r6 + rdx*4]        ; lookup value 0
-    pextrd      edx, m0, 1
+    movzx       edx, byte [r0 + rax + 1]
     movss       m2, [r6 + rdx*4]        ; lookup value 1
-    pextrd      edx, m0, 2
+    movzx       edx, byte [r0 + rax + 2]
     movss       m3, [r6 + rdx*4]        ; lookup value 2
-    pextrd      edx, m0, 3
+    movzx       edx, byte [r0 + rax + 3]
     movss       m4, [r6 + rdx*4]        ; lookup value 3
     
-    ; Pack the 4 floats together
-    insertps    m1, m2, 0x10            ; insert value 1
-    insertps    m1, m3, 0x20            ; insert value 2
-    insertps    m1, m4, 0x30            ; insert value 3
+    ; Pack the 4 floats together using SSE2 instructions
+    unpcklps    m1, m2                  ; m1 = [val0, val1, ?, ?]
+    unpcklps    m3, m4                  ; m3 = [val2, val3, ?, ?]
+    movlhps     m1, m3                  ; m1 = [val0, val1, val2, val3]
     
     ; Store result
     movdqu      [r1 + rax*4], m1        ; store 4 floats
