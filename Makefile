@@ -118,6 +118,11 @@ SRCASM_X += common/x86/bitstream-a.asm \
             common/x86/pixel-a.asm \
             common/x86/predict-a.asm \
             common/x86/quant-a.asm
+
+ifneq ($(findstring HAVE_BUTTERAUGLI 1, $(CONFIG)),)
+SRCASM_X += common/x86/butteraugli-a.asm
+SRCS_X   += common/x86/butteraugli-c.c
+endif
 SRCS_X   += common/x86/mc-c.c \
             common/x86/predict-c.c
 
@@ -187,6 +192,10 @@ endif
 SRCS_X   += common/aarch64/asm-offsets.c \
             common/aarch64/mc-c.c \
             common/aarch64/predict-c.c
+
+ifneq ($(findstring HAVE_BUTTERAUGLI 1, $(CONFIG)),)
+SRCS_X   += common/aarch64/butteraugli-c.c common/aarch64/butteraugli-visual-mask.c common/aarch64/butteraugli-optimized.c common/aarch64/butteraugli-sve.c
+endif
 
 OBJASM +=
 ifneq ($(findstring HAVE_BITDEPTH8 1, $(CONFIG)),)
@@ -323,12 +332,25 @@ $(OBJCLI): CFLAGS += $(CFLAGSCLI)
 ALLOBJS = $(OBJS) $(OBJASM) $(OBJSO) $(OBJCLI) $(OBJCHK) $(OBJCHK_8) $(OBJCHK_10) $(OBJEXAMPLE)
 $(ALLOBJS): $(GENERATED)
 
+# Special rule for x264.c to include butteraugli defines
+x264.o: x264.c
+	$(DEPCMD)
+ifneq ($(findstring HAVE_BUTTERAUGLI 1, $(CONFIG)),)
+	$(CC) $(CFLAGS) -DHAVE_BUTTERAUGLI=1 -c $< $(CC_O) $(DEPFLAGS)
+else
+	$(CC) $(CFLAGS) -c $< $(CC_O) $(DEPFLAGS)
+endif
+
 %.o: %.c
 	$(DEPCMD)
 	$(CC) $(CFLAGS) -c $< $(CC_O) $(DEPFLAGS)
 
 # Create CXXFLAGS by removing C-specific flags from CFLAGS
 CXXFLAGS = $(filter-out -std=gnu99,$(CFLAGS))
+# Add butteraugli defines for C++ compilation
+ifneq ($(findstring HAVE_BUTTERAUGLI 1, $(CONFIG)),)
+CXXFLAGS += -DHAVE_BUTTERAUGLI=1
+endif
 
 %.o: %.cc
 	$(DEPCMD)

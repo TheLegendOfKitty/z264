@@ -24,6 +24,13 @@
 #include "common.h"
 #include "butteraugli.h"
 
+#if HAVE_MMX
+#include "x86/butteraugli.h"
+#endif
+#if HAVE_ARMV6 || HAVE_AARCH64
+#include "aarch64/butteraugli.h"
+#endif
+
 #ifdef HAVE_BUTTERAUGLI
 
 /* Forward declarations for C++ butteraugli functions */
@@ -48,6 +55,11 @@ void butteraugli_compute_mask( void* context,
                               const uint8_t* ref_r, const uint8_t* ref_g, const uint8_t* ref_b,
                               int ref_stride,
                               float* mask, int mask_stride );
+double butteraugli_fuzzy_class( double score );
+double butteraugli_fuzzy_inverse( double seek );
+int butteraugli_adaptive_quantization( int width, int height,
+                                      const uint8_t* rgb_r, const uint8_t* rgb_g, const uint8_t* rgb_b,
+                                      int rgb_stride, float* quant_map, int quant_stride );
 
 #ifdef __cplusplus
 }
@@ -63,7 +75,7 @@ struct x264_butteraugli_t
     /* Configuration */
     x264_butteraugli_config_t config;
     
-    /* Temporary buffers for YUV to RGB conversion */
+    /* Global buffers for full-frame operations (protected by mutex) */
     uint8_t *rgb_ref;
     uint8_t *rgb_enc;
     int rgb_stride;
@@ -76,7 +88,149 @@ struct x264_butteraugli_t
     x264_pthread_mutex_t mutex;
 };
 
-/* YUV to RGB conversion for butteraugli input */
+/* YUV to RGB conversion coefficients for different color spaces */
+typedef struct
+{
+    int16_t coeff_r_v;      /* R = Y + coeff_r_v * V */
+    int16_t coeff_g_u;      /* G = Y - coeff_g_u * U - coeff_g_v * V */
+    int16_t coeff_g_v;
+    int16_t coeff_b_u;      /* B = Y + coeff_b_u * U */
+} yuv_to_rgb_coeffs_t;
+
+/* Pre-computed coefficients scaled by 256 for fixed-point arithmetic */
+static const yuv_to_rgb_coeffs_t yuv_coeffs[3] = {
+    /* BT.601 */
+    { 360, -88, -184, 455 },
+    /* BT.709 */
+    { 404, -48, -120, 475 },
+    /* BT.2020 */
+    { 377, -42, -133, 482 }
+};
+
+/* Scalar YUV to RGB conversion with planar output */
+static void butteraugli_yuv_to_rgb_c( const uint8_t *y, const uint8_t *u, const uint8_t *v,
+                                      int y_stride, int uv_stride,
+                                      uint8_t *rgb_r, uint8_t *rgb_g, uint8_t *rgb_b, int rgb_stride,
+                                      int width, int height, x264_butteraugli_colorspace_t colorspace )
+{
+    const yuv_to_rgb_coeffs_t *coeffs = &yuv_coeffs[colorspace];
+    
+    for( int j = 0; j < height; j++ )
+    {
+        for( int i = 0; i < width; i++ )
+        {
+            int yi = y[j * y_stride + i];
+            int ui = u[(j/2) * uv_stride + (i/2)] - 128;
+            int vi = v[(j/2) * uv_stride + (i/2)] - 128;
+            
+            int r = yi + ((coeffs->coeff_r_v * vi) >> 8);
+            int g = yi - ((coeffs->coeff_g_u * ui + coeffs->coeff_g_v * vi) >> 8);
+            int b = yi + ((coeffs->coeff_b_u * ui) >> 8);
+            
+            rgb_r[j * rgb_stride + i] = x264_clip3( r, 0, 255 );
+            rgb_g[j * rgb_stride + i] = x264_clip3( g, 0, 255 );
+            rgb_b[j * rgb_stride + i] = x264_clip3( b, 0, 255 );
+        }
+    }
+}
+
+/* sRGB to linear conversion - scalar implementation */
+static void butteraugli_srgb_to_linear_c( const uint8_t *srgb, float *linear,
+                                          int width, int height, int stride )
+{
+    for( int j = 0; j < height; j++ )
+    {
+        for( int i = 0; i < width; i++ )
+        {
+            float val = srgb[j * stride + i] / 255.0f;
+            if( val <= 0.04045f )
+                linear[j * width + i] = val / 12.92f;
+            else
+                linear[j * width + i] = powf( (val + 0.055f) / 1.055f, 2.4f );
+        }
+    }
+}
+
+/* Create planar float image from RGB - scalar implementation */
+static void butteraugli_create_image_planar_c( const uint8_t *rgb_r, const uint8_t *rgb_g, const uint8_t *rgb_b,
+                                               int rgb_stride, float *planar_r, float *planar_g, float *planar_b,
+                                               int width, int height )
+{
+    for( int j = 0; j < height; j++ )
+    {
+        for( int i = 0; i < width; i++ )
+        {
+            planar_r[j * width + i] = (float)rgb_r[j * rgb_stride + i];
+            planar_g[j * width + i] = (float)rgb_g[j * rgb_stride + i];
+            planar_b[j * width + i] = (float)rgb_b[j * rgb_stride + i];
+        }
+    }
+}
+
+/* Compute visual mask - scalar implementation */
+static void butteraugli_compute_visual_mask_c( const float *ref_r, const float *ref_g, const float *ref_b,
+                                              int ref_stride, float *mask, int mask_stride,
+                                              int width, int height )
+{
+    /* Set borders to neutral masking value */
+    for( int y = 0; y < height; y++ )
+    {
+        mask[y * mask_stride + 0] = 1.0f;
+        mask[y * mask_stride + width - 1] = 1.0f;
+    }
+    for( int x = 0; x < width; x++ )
+    {
+        mask[0 * mask_stride + x] = 1.0f;
+        mask[(height - 1) * mask_stride + x] = 1.0f;
+    }
+    
+    /* Compute variance-based masking for inner pixels */
+    for( int y = 1; y < height - 1; y++ )
+    {
+        for( int x = 1; x < width - 1; x++ )
+        {
+            float sum = 0.0f;
+            float sum_sq = 0.0f;
+            
+            /* Compute statistics over 3x3 neighborhood */
+            for( int dy = -1; dy <= 1; dy++ )
+            {
+                for( int dx = -1; dx <= 1; dx++ )
+                {
+                    int offset = (y + dy) * ref_stride + (x + dx);
+                    /* BT.709 luma coefficients */
+                    float luma = 0.2126f * ref_r[offset] + 0.7152f * ref_g[offset] + 0.0722f * ref_b[offset];
+                    sum += luma;
+                    sum_sq += luma * luma;
+                }
+            }
+            
+            float mean = sum / 9.0f;
+            float variance = (sum_sq / 9.0f) - (mean * mean);
+            
+            /* Map variance to masking strength */
+            float masking = 1.0f + expf(-variance * 100.0f);
+            mask[y * mask_stride + x] = fminf(2.0f, fmaxf(0.5f, masking));
+        }
+    }
+}
+
+/* Convert heatmap to uint8 - scalar implementation */
+static void butteraugli_heatmap_to_uint8_c( const float *heatmap, int heatmap_stride,
+                                            uint8_t *output, int output_stride,
+                                            int width, int height, float scale )
+{
+    for( int y = 0; y < height; y++ )
+    {
+        for( int x = 0; x < width; x++ )
+        {
+            float val = heatmap[y * heatmap_stride + x] * scale;
+            output[y * output_stride + x] = (uint8_t)x264_clip3f( val, 0.0f, 255.0f );
+        }
+    }
+}
+
+/* YUV to RGB conversion for butteraugli input (legacy - interleaved output) */
 static void yuv_to_rgb( const uint8_t *y, const uint8_t *u, const uint8_t *v,
                        int y_stride, int uv_stride,
                        uint8_t *rgb, int rgb_stride,
@@ -297,19 +451,87 @@ float x264_butteraugli_mb_weight( x264_butteraugli_t *ba,
     if( width <= 0 || height <= 0 )
         return 0.0f;
     
-    /* Use tile computation for efficiency */
-    float mb_distance = x264_butteraugli_compute_tile( ba,
-                                                       ref_yuv, ref_stride,
-                                                       enc_yuv, enc_stride,
-                                                       x, y, width, height );
-    
-    /* Convert distance to weight (inverse relationship) */
-    float weight = 1.0f / (1.0f + mb_distance / ba->config.target_distance);
-    
-    /* Apply strength factor */
-    weight = 1.0f - ba->config.strength * (1.0f - weight);
-    
-    return weight;
+    /* For 16x16 MB, use thread-local buffers to avoid allocation overhead */
+    if( width == 16 && height == 16 )
+    {
+        /* Allocate thread-local buffers on stack */
+        ALIGNED_ARRAY_32( uint8_t, rgb_ref_local, [16*16*3] );
+        ALIGNED_ARRAY_32( uint8_t, rgb_enc_local, [16*16*3] );
+        
+        /* Convert MB to RGB using thread-local buffers */
+        for( int j = 0; j < 16; j++ )
+        {
+            for( int i = 0; i < 16; i++ )
+            {
+                int src_x = x + i;
+                int src_y = y + j;
+                
+                int yi_ref = ref_yuv[0][src_y * ref_stride[0] + src_x];
+                int ui_ref = ref_yuv[1][(src_y/2) * ref_stride[1] + (src_x/2)] - 128;
+                int vi_ref = ref_yuv[2][(src_y/2) * ref_stride[2] + (src_x/2)] - 128;
+                
+                int yi_enc = enc_yuv[0][src_y * enc_stride[0] + src_x];
+                int ui_enc = enc_yuv[1][(src_y/2) * enc_stride[1] + (src_x/2)] - 128;
+                int vi_enc = enc_yuv[2][(src_y/2) * enc_stride[2] + (src_x/2)] - 128;
+                
+                /* Reference RGB */
+                int r = yi_ref + ((360 * vi_ref) >> 8);
+                int g = yi_ref - ((88 * ui_ref + 184 * vi_ref) >> 8);
+                int b = yi_ref + ((455 * ui_ref) >> 8);
+                
+                rgb_ref_local[j * 16 * 3 + i * 3 + 0] = x264_clip3( r, 0, 255 );
+                rgb_ref_local[j * 16 * 3 + i * 3 + 1] = x264_clip3( g, 0, 255 );
+                rgb_ref_local[j * 16 * 3 + i * 3 + 2] = x264_clip3( b, 0, 255 );
+                
+                /* Encoded RGB */
+                r = yi_enc + ((360 * vi_enc) >> 8);
+                g = yi_enc - ((88 * ui_enc + 184 * vi_enc) >> 8);
+                b = yi_enc + ((455 * ui_enc) >> 8);
+                
+                rgb_enc_local[j * 16 * 3 + i * 3 + 0] = x264_clip3( r, 0, 255 );
+                rgb_enc_local[j * 16 * 3 + i * 3 + 1] = x264_clip3( g, 0, 255 );
+                rgb_enc_local[j * 16 * 3 + i * 3 + 2] = x264_clip3( b, 0, 255 );
+            }
+        }
+        
+        /* Create temporary context for MB processing */
+        void *mb_context = butteraugli_create_context( 16, 16, 1 );
+        float mb_distance = 0.0f;
+        
+        if( mb_context )
+        {
+            mb_distance = butteraugli_compute_distance( mb_context,
+                                                       rgb_ref_local, rgb_ref_local + 1, rgb_ref_local + 2,
+                                                       16 * 3,
+                                                       rgb_enc_local, rgb_enc_local + 1, rgb_enc_local + 2,
+                                                       16 * 3 );
+            butteraugli_destroy_context( mb_context );
+        }
+        
+        /* Convert distance to weight (inverse relationship) */
+        float weight = 1.0f / (1.0f + mb_distance / ba->config.target_distance);
+        
+        /* Apply strength factor */
+        weight = 1.0f - ba->config.strength * (1.0f - weight);
+        
+        return weight;
+    }
+    else
+    {
+        /* For partial MBs, use tile computation */
+        float mb_distance = x264_butteraugli_compute_tile( ba,
+                                                           ref_yuv, ref_stride,
+                                                           enc_yuv, enc_stride,
+                                                           x, y, width, height );
+        
+        /* Convert distance to weight (inverse relationship) */
+        float weight = 1.0f / (1.0f + mb_distance / ba->config.target_distance);
+        
+        /* Apply strength factor */
+        weight = 1.0f - ba->config.strength * (1.0f - weight);
+        
+        return weight;
+    }
 }
 
 void x264_butteraugli_configure( x264_butteraugli_t *ba, const x264_butteraugli_config_t *config )
@@ -393,6 +615,42 @@ float x264_butteraugli_compute_tile( x264_butteraugli_t *ba,
     return distance;
 }
 
+float x264_butteraugli_fuzzy_class( float score )
+{
+    return (float)butteraugli_fuzzy_class( (double)score );
+}
+
+float x264_butteraugli_fuzzy_inverse( float seek )
+{
+    return (float)butteraugli_fuzzy_inverse( (double)seek );
+}
+
+int x264_butteraugli_adaptive_quantization( x264_butteraugli_t *ba,
+                                           const uint8_t *yuv[3], int stride[3],
+                                           float *quant_map, int quant_stride )
+{
+    if( !ba || !ba->context )
+        return 0;
+    
+    x264_pthread_mutex_lock( &ba->mutex );
+    
+    /* Convert YUV to RGB */
+    yuv_to_rgb( yuv[0], yuv[1], yuv[2],
+                stride[0], stride[1],
+                ba->rgb_ref, ba->rgb_stride,
+                ba->width, ba->height );
+    
+    /* Call butteraugli adaptive quantization with planar RGB */
+    int result = butteraugli_adaptive_quantization( ba->width, ba->height,
+                                                   ba->rgb_ref, ba->rgb_ref + 1, ba->rgb_ref + 2,
+                                                   ba->rgb_stride,
+                                                   quant_map, quant_stride );
+    
+    x264_pthread_mutex_unlock( &ba->mutex );
+    
+    return result;
+}
+
 #else /* !HAVE_BUTTERAUGLI */
 
 /* Stub implementations when butteraugli is not available */
@@ -446,4 +704,88 @@ float x264_butteraugli_compute_tile( x264_butteraugli_t *ba,
     return 0.0f;
 }
 
+float x264_butteraugli_fuzzy_class( float score )
+{
+    return 0.0f;
+}
+
+float x264_butteraugli_fuzzy_inverse( float seek )
+{
+    return 1.0f;
+}
+
+int x264_butteraugli_adaptive_quantization( x264_butteraugli_t *ba,
+                                           const uint8_t *yuv[3], int stride[3],
+                                           float *quant_map, int quant_stride )
+{
+    return 0;
+}
+
 #endif /* HAVE_BUTTERAUGLI */
+
+/* Butteraugli function pointer initialization - always available */
+void x264_butteraugli_init( uint32_t cpu, x264_butteraugli_function_t *baf )
+{
+#ifdef HAVE_BUTTERAUGLI
+    /* Initialize with scalar implementations */
+    baf->yuv_to_rgb = butteraugli_yuv_to_rgb_c;
+    baf->srgb_to_linear = butteraugli_srgb_to_linear_c;
+    baf->create_image_planar = butteraugli_create_image_planar_c;
+    baf->compute_visual_mask = butteraugli_compute_visual_mask_c;
+    baf->heatmap_to_uint8 = butteraugli_heatmap_to_uint8_c;
+
+#if HAVE_MMX
+    /* x86 optimizations */
+    if( cpu & X264_CPU_SSE2 )
+    {
+        baf->yuv_to_rgb = x264_butteraugli_yuv_to_rgb_sse2;
+        baf->srgb_to_linear = x264_butteraugli_srgb_to_linear_sse2;
+        baf->create_image_planar = x264_butteraugli_create_image_planar_sse2;
+        baf->compute_visual_mask = x264_butteraugli_compute_visual_mask_sse2;
+        baf->heatmap_to_uint8 = x264_butteraugli_heatmap_to_uint8_sse2;
+    }
+    
+    if( cpu & X264_CPU_AVX2 )
+    {
+        baf->yuv_to_rgb = x264_butteraugli_yuv_to_rgb_avx2;
+        baf->srgb_to_linear = x264_butteraugli_srgb_to_linear_avx2;
+        baf->create_image_planar = x264_butteraugli_create_image_planar_avx2;
+        baf->compute_visual_mask = x264_butteraugli_compute_visual_mask_avx2;
+        baf->heatmap_to_uint8 = x264_butteraugli_heatmap_to_uint8_avx2;
+    }
+    
+    if( cpu & X264_CPU_AVX512 )
+    {
+        baf->yuv_to_rgb = x264_butteraugli_yuv_to_rgb_avx512;
+        baf->srgb_to_linear = x264_butteraugli_srgb_to_linear_avx512;
+        baf->create_image_planar = x264_butteraugli_create_image_planar_avx512;
+        baf->compute_visual_mask = x264_butteraugli_compute_visual_mask_avx512;
+        baf->heatmap_to_uint8 = x264_butteraugli_heatmap_to_uint8_avx512;
+    }
+#endif
+
+#if HAVE_ARMV6 || HAVE_AARCH64
+    /* ARM optimizations */
+    if( cpu & X264_CPU_NEON )
+    {
+        baf->yuv_to_rgb = x264_butteraugli_yuv_to_rgb_neon;
+        baf->srgb_to_linear = x264_butteraugli_srgb_to_linear_neon;
+        baf->create_image_planar = x264_butteraugli_create_image_planar_neon;
+        baf->compute_visual_mask = x264_butteraugli_compute_visual_mask_neon;
+        baf->heatmap_to_uint8 = x264_butteraugli_heatmap_to_uint8_neon;
+    }
+    
+    if( cpu & X264_CPU_SVE )
+    {
+        baf->yuv_to_rgb = x264_butteraugli_yuv_to_rgb_sve;
+        baf->srgb_to_linear = x264_butteraugli_srgb_to_linear_sve;
+        baf->create_image_planar = x264_butteraugli_create_image_planar_sve;
+        baf->compute_visual_mask = x264_butteraugli_compute_visual_mask_sve;
+        baf->heatmap_to_uint8 = x264_butteraugli_heatmap_to_uint8_sve;
+    }
+#endif
+#else
+    /* No-op when butteraugli is not available */
+    memset( baf, 0, sizeof(*baf) );
+#endif
+}

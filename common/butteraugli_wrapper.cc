@@ -82,7 +82,7 @@ static std::vector<butteraugli::ImageF> CreateImageFromPlanar(
         for (int y = 0; y < height; y++) {
             float* row = image[c].Row(y);
             for (int x = 0; x < width; x++) {
-                row[x] = Srgb8ToLinear(src[y * stride + x * 3]);
+                row[x] = Srgb8ToLinear(src[y * stride + x]);
             }
         }
     }
@@ -174,65 +174,127 @@ void butteraugli_compute_mask(void* context,
             ref_r, ref_g, ref_b, ref_stride, ctx->width, ctx->height);
         
         // Compute visual masking based on image complexity
-        // This is a simplified version - butteraugli doesn't expose the exact masking
-        // so we approximate based on local variance and edge detection
+        // Enhanced version with multiple spatial frequency bands
         
+        // First pass: Compute luminance and basic statistics
+        butteraugli::ImageF luma(ctx->width, ctx->height);
+        for (int y = 0; y < ctx->height; y++) {
+            for (int x = 0; x < ctx->width; x++) {
+                // BT.709 luma coefficients for linear RGB
+                float l = 0.2126f * ref_image[0].Row(y)[x] +
+                         0.7152f * ref_image[1].Row(y)[x] +
+                         0.0722f * ref_image[2].Row(y)[x];
+                luma.Row(y)[x] = l;
+            }
+        }
+        
+        // Second pass: Multi-scale edge detection and variance computation
         for (int y = 0; y < ctx->height; y++) {
             float* mask_row = mask + y * mask_stride;
             
             for (int x = 0; x < ctx->width; x++) {
-                // Compute local variance in a 3x3 window
-                float sum = 0.0f;
-                float sum_sq = 0.0f;
-                int count = 0;
+                float masking = 0.0f;
+                float total_weight = 0.0f;
                 
-                for (int dy = -1; dy <= 1; dy++) {
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx;
-                        int ny = y + dy;
-                        if (nx >= 0 && nx < ctx->width && ny >= 0 && ny < ctx->height) {
-                            // Use luma from linear RGB
-                            float luma = 0.299f * ref_image[0].Row(ny)[nx] +
-                                        0.587f * ref_image[1].Row(ny)[nx] +
-                                        0.114f * ref_image[2].Row(ny)[nx];
-                            sum += luma;
-                            sum_sq += luma * luma;
-                            count++;
+                // Analyze at multiple scales (3x3, 5x5, 7x7)
+                const int scales[] = {1, 2, 3};
+                const float scale_weights[] = {0.5f, 0.3f, 0.2f};
+                
+                for (int s = 0; s < 3; s++) {
+                    int radius = scales[s];
+                    float weight = scale_weights[s];
+                    
+                    float sum = 0.0f;
+                    float sum_sq = 0.0f;
+                    float edge_strength = 0.0f;
+                    int count = 0;
+                    
+                    // Compute variance and edge detection in window
+                    for (int dy = -radius; dy <= radius; dy++) {
+                        for (int dx = -radius; dx <= radius; dx++) {
+                            int nx = x + dx;
+                            int ny = y + dy;
+                            if (nx >= 0 && nx < ctx->width && ny >= 0 && ny < ctx->height) {
+                                float l = luma.Row(ny)[nx];
+                                sum += l;
+                                sum_sq += l * l;
+                                count++;
+                                
+                                // Sobel edge detection components
+                                if (dx != 0 && dy != 0 && nx > 0 && nx < ctx->width-1 && 
+                                    ny > 0 && ny < ctx->height-1) {
+                                    float gx = luma.Row(ny)[nx+1] - luma.Row(ny)[nx-1];
+                                    float gy = luma.Row(ny+1)[nx] - luma.Row(ny-1)[nx];
+                                    edge_strength += std::sqrt(gx*gx + gy*gy);
+                                }
+                            }
                         }
                     }
+                    
+                    float mean = sum / count;
+                    float variance = (sum_sq / count) - (mean * mean);
+                    edge_strength /= count;
+                    
+                    // Combine variance and edge information
+                    // High frequency content = less masking
+                    float activity = variance + 0.1f * edge_strength;
+                    
+                    // Map activity to masking strength
+                    // Using a more sophisticated transfer function
+                    float scale_masking;
+                    if (activity < 0.001f) {
+                        scale_masking = 2.0f;  // Very smooth areas: maximum masking
+                    } else if (activity < 0.01f) {
+                        scale_masking = 1.5f + 0.5f * std::exp(-activity * 500.0f);
+                    } else if (activity < 0.1f) {
+                        scale_masking = 1.0f + 0.5f * std::exp(-activity * 50.0f);
+                    } else {
+                        scale_masking = 0.8f + 0.2f * std::exp(-activity * 5.0f);
+                    }
+                    
+                    masking += weight * scale_masking;
+                    total_weight += weight;
                 }
                 
-                float mean = sum / count;
-                float variance = (sum_sq / count) - (mean * mean);
-                
-                // Map variance to masking factor
-                // High variance (edges, texture) = less masking (value closer to 1.0)
-                // Low variance (smooth areas) = more masking (value closer to 2.0)
-                float masking = 1.0f + std::exp(-variance * 100.0f);
+                masking /= total_weight;
                 mask_row[x] = std::min(2.0f, std::max(0.5f, masking));
             }
         }
         
-        // Apply spatial blur to smooth the mask
-        // Simple box filter for now
+        // Apply edge-preserving filter to smooth the mask
         std::vector<float> temp_mask(ctx->width * ctx->height);
         for (int y = 1; y < ctx->height - 1; y++) {
             for (int x = 1; x < ctx->width - 1; x++) {
-                float sum = 0.0f;
+                float center = mask[y * mask_stride + x];
+                float sum = center * 4.0f;  // Give more weight to center
+                float weight_sum = 4.0f;
+                
+                // Bilateral-like filtering
                 for (int dy = -1; dy <= 1; dy++) {
                     for (int dx = -1; dx <= 1; dx++) {
-                        sum += mask[(y + dy) * mask_stride + (x + dx)];
+                        if (dx == 0 && dy == 0) continue;
+                        
+                        float neighbor = mask[(y + dy) * mask_stride + (x + dx)];
+                        float diff = std::abs(neighbor - center);
+                        float weight = std::exp(-diff * 10.0f);  // Edge preservation
+                        
+                        sum += neighbor * weight;
+                        weight_sum += weight;
                     }
                 }
-                temp_mask[y * ctx->width + x] = sum / 9.0f;
+                temp_mask[y * ctx->width + x] = sum / weight_sum;
             }
         }
         
-        // Copy back
-        for (int y = 1; y < ctx->height - 1; y++) {
-            std::memcpy(mask + y * mask_stride + 1,
-                       &temp_mask[y * ctx->width + 1],
-                       (ctx->width - 2) * sizeof(float));
+        // Copy back with border handling
+        for (int y = 0; y < ctx->height; y++) {
+            for (int x = 0; x < ctx->width; x++) {
+                if (y == 0 || y == ctx->height - 1 || x == 0 || x == ctx->width - 1) {
+                    mask[y * mask_stride + x] = 1.0f;  // Neutral masking at borders
+                } else {
+                    mask[y * mask_stride + x] = temp_mask[y * ctx->width + x];
+                }
+            }
         }
         
     } catch (...) {
@@ -240,6 +302,63 @@ void butteraugli_compute_mask(void* context,
         for (int y = 0; y < ctx->height; y++) {
             std::fill_n(mask + y * mask_stride, ctx->width, 1.0f);
         }
+    }
+}
+
+double butteraugli_fuzzy_class(double score) {
+    try {
+        return butteraugli::ButteraugliFuzzyClass(score);
+    } catch (...) {
+        return 0.0;
+    }
+}
+
+double butteraugli_fuzzy_inverse(double seek) {
+    try {
+        return butteraugli::ButteraugliFuzzyInverse(seek);
+    } catch (...) {
+        return 1.0;
+    }
+}
+
+bool butteraugli_adaptive_quantization(int width, int height,
+                                       const uint8_t* rgb_r, const uint8_t* rgb_g, const uint8_t* rgb_b,
+                                       int rgb_stride, float* quant_map, int quant_stride) {
+    try {
+        // Create vector of vectors for RGB data as expected by butteraugli API
+        std::vector<std::vector<float>> rgb(3);
+        for (int c = 0; c < 3; c++) {
+            rgb[c].resize(width * height);
+        }
+        
+        // Convert uint8_t RGB to float and copy to vectors
+        const uint8_t* channels[3] = { rgb_r, rgb_g, rgb_b };
+        for (int c = 0; c < 3; c++) {
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    // Convert sRGB to linear as butteraugli expects
+                    float val = Srgb8ToLinear(channels[c][y * rgb_stride + x]);
+                    rgb[c][y * width + x] = val;
+                }
+            }
+        }
+        
+        // Call butteraugli adaptive quantization
+        std::vector<float> quant;
+        if (!butteraugli::ButteraugliAdaptiveQuantization(width, height, rgb, quant)) {
+            return false;
+        }
+        
+        // Copy quantization map to output with proper stride
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                quant_map[y * quant_stride + x] = quant[y * width + x];
+            }
+        }
+        
+        return true;
+    } catch (...) {
+        return false;
     }
 }
 

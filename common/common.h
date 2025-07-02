@@ -757,6 +757,9 @@ struct x264_t
     x264_quant_function_t quantf;
     x264_deblock_function_t loopf;
     x264_bitstream_function_t bsf;
+#if HAVE_BUTTERAUGLI
+    x264_butteraugli_function_t butterauglif;
+#endif
 
     x264_lookahead_t *lookahead;
 
