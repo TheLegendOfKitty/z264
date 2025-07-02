@@ -78,7 +78,11 @@ static void lookahead_slicetype_decide( x264_t *h )
         if( ref && ref->i_type != X264_TYPE_IDR )
         {
             /* Compute butteraugli visual mask for adaptive quantization */
-            const pixel *ref_yuv[3] = { ref->plane[0], ref->plane[1], ref->plane[2] };
+#if HIGH_BIT_DEPTH
+            /* Butteraugli requires uint8_t input, skip for high bit depth */
+            (void)ref;
+#else
+            const uint8_t *ref_yuv[3] = { ref->plane[0], ref->plane[1], ref->plane[2] };
             int ref_stride[3] = { ref->i_stride[0], ref->i_stride[1], ref->i_stride[2] };
             
             float *mask = x264_malloc( h->param.i_width * h->param.i_height * sizeof(float) );
@@ -108,6 +112,7 @@ static void lookahead_slicetype_decide( x264_t *h )
                 
                 x264_free( mask );
             }
+#endif
         }
     }
 #endif
