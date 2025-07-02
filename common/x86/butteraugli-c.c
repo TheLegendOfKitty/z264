@@ -23,6 +23,7 @@
 
 #include "common/common.h"
 #include "common/butteraugli.h"
+#include "butteraugli.h"
 
 #if HAVE_MMX
 #include <emmintrin.h> /* SSE2 */
